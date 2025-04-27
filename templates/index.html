@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Face Capture for Encryption</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f4f4f4;
+        }
+
+        h1 {
+            text-align: center;
+        }
+
+        #container {
+            position: relative;
+            display: inline-block;
+        }
+
+        #webcam {
+            width: 640px;
+            height: 480px;
+            border: 2px solid #000;
+            transform: scaleX(-1);
+        }
+
+        #oval {
+            position: absolute;
+            top: 40%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 200px;
+            height: 270px;
+            border-radius: 50%;
+            border: 3px solid #ff0000;
+            background-color: rgba(0, 0, 0, 0.2);
+        }
+
+        button {
+            display: block;
+            margin: 20px auto;
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+
+        #status {
+            text-align: center;
+            font-size: 18px;
+            color: #333;
+        }
+        #enc/dec_status {
+            text-align: center;
+            font-size: 18px;
+            color: #333;
+        }
+        #encryption-box {
+            margin-top: 20px;
+            text-align: center;
+        }
+
+        textarea {
+            width: 300px;
+            height: 100px;
+            margin: 10px;
+            padding: 10px;
+            font-size: 16px;
+        }
+    </style>
+</head>
+<body>
+
+    <div>
+        <h1>🔐 EncryptYoFace - Facial Encryption Tool</h1>
+
+        <div id="container">
+            <h2>Step 1: Capture your face</h2>
+            <video id="webcam" width="640" height="480" autoplay></video>
+            <canvas id="canvas" style="display: none;"></canvas>
+            <div id="oval"></div>
+        </div>
+e
+        <div id="status"></div>
+        <div id="enc/dec_status"></div>
+        <div id="encryption-box">
+            <h2>Text Encryption</h2>
+            <textarea id="inputText" placeholder="Enter text to encrypt/decrypt"></textarea><br>
+            <button id="encryptButton" onclick="encryptText()">Encrypt</button>
+            <button id="decryptButton" onclick="decryptText()">Decrypt</button><br>
+            <div id="encryptionKey"></div>
+        </div>
+    </div>
+
+    <script>
+    const webcam = document.getElementById('webcam');
+    const canvas = document.getElementById('canvas');
+    const context = canvas.getContext('2d');
+    let isCapturing = false;
+
+    let webcamStream = null;
+    let encryptionKey = null;
+
+    function startWebcam() {
+        navigator.mediaDevices.getUserMedia({ video: true })
+            .then(stream => {
+                webcam.srcObject = stream;
+                webcamStream = stream;
+            })
+            .catch(err => {
+                console.error("Error accessing webcam:", err);
+            });
+    }
+
+    function stopWebcam() {
+        if (webcamStream) {
+            let tracks = webcamStream.getTracks();
+            tracks.forEach(track => track.stop());
+            webcamStream = null;
+        }
+    }
+
+    // Capture the face when called by encrypt or decrypt
+    function captureFace() {
+        return new Promise((resolve, reject) => {
+            if (isCapturing) {
+                return;
+            }
+
+            isCapturing = true;
+            document.getElementById('status').innerText = 'Capturing face...';
+
+            context.clearRect(0, 0, canvas.width, canvas.height);
+            context.drawImage(webcam, 0, 0, canvas.width, canvas.height);
+            const faceData = canvas.toDataURL('image/png');
+
+            // Send face data to the server and wait for key generation
+            fetch('/capture-face', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ image: faceData })
+            })
+            .then(response => response.json())
+            .then(data => {
+                encryptionKey = data.key;
+                console.log('Encryption Key generated:', encryptionKey);
+                document.getElementById('status').innerText = 'Face captured and key generated.';
+                document.getElementById('encryptionKey').innerText = `Encryption Key: ${encryptionKey}`;
+                resolve();  // Resolve the promise when the key is ready
+            })
+            .catch(err => {
+                console.error('Error sending face data:', err);
+                document.getElementById('status').innerText = 'Error during capture.';
+                reject();  // Reject the promise if an error occurs
+            })
+            .finally(() => {
+                isCapturing = false;
+            });
+        });
+    }
+
+    // Encrypt the text using the generated key
+    async function encryptText() {
+        const inputText = document.getElementById('inputText').value;
+        if (inputText) {
+            try {
+                await captureFace();  // Wait for the face capture before encrypting
+                if (encryptionKey) {
+                    fetch('/encrypt', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ text: inputText, key: encryptionKey })
+                    })
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error('Failed to encrypt text');
+                        }
+                        return response.json();
+                    })
+                    .then(data => {
+                        document.getElementById('inputText').value = data.encrypted_text;  // Update with encrypted text
+                    })
+                    .catch(err => {
+                        console.error('Error encrypting text:', err);
+                        document.getElementById('status').innerText = 'Encryption failed.';
+                    });
+                }
+            } catch (err) {
+                console.error('Face capture failed:', err);
+                document.getElementById('status').innerText = 'Face capture failed.';
+            }
+        } else {
+            document.getElementById('status').innerText = 'Please enter text to encrypt.';
+        }
+    }
+
+    // Decrypt the text using the generated key
+    async function decryptText() {
+        const encryptedText = document.getElementById('inputText').value;
+        if (encryptedText) {
+            try {
+                await captureFace();  // Wait for the face capture before decrypting
+                if (encryptionKey) {
+                    fetch('/decrypt', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ encrypted_text: encryptedText, key: encryptionKey })
+                    })
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error('Failed to decrypt text');
+                        }
+                        return response.json();
+                    })
+                    .then(data => {
+                        document.getElementById('inputText').value = data.decrypted_text;  // Update with decrypted text
+                    })
+                    .catch(err => {
+                        console.error('Error decrypting text:', err);
+                        document.getElementById('status').innerText = 'Decryption failed.';
+                    });
+                }
+            } catch (err) {
+                console.error('Face capture failed:', err);
+                document.getElementById('status').innerText = 'Face capture failed.';
+            }
+        } else {
+            document.getElementById('status').innerText = 'Please enter text to decrypt.';
+        }
+    }
+
+    window.onload = function() {
+        startWebcam();
+    };
+</script>
+
+
+
+</body>
+</html>
